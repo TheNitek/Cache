@@ -4,6 +4,9 @@
 #include <Wire.h>
 #include <QMC5883LCompass.h>
 #include <SparkFunLSM6DS3.h>
+#include <SPI.h>
+#include <MFRC522.h>
+
 
 /**
  * LED Direction
@@ -13,16 +16,22 @@
  */
 
 #define LED_PIN 27
-#define LED_COUNT 8
+#define LED_COUNT 16
 
 #define RXD2 16
 #define TXD2 17
 const uint32_t GPSBaud = 9600;
 
-NeoPixelBus<NeoGrbFeature, Neo800KbpsMethod> ring(8, 27);
+#define BUZZER_PIN 26
+
+#define RC522_RST_PIN         4
+#define RC522_CS_PIN          5
+
+NeoPixelBus<NeoGrbFeature, Neo800KbpsMethod> ring(LED_COUNT, LED_PIN);
 TinyGPSPlus gps;
 QMC5883LCompass compass;
 LSM6DS3 gyro;
+MFRC522 mfrc522(RC522_CS_PIN, RC522_RST_PIN);  // Create MFRC522 instance
 
 #define O_X_DOWN 0x01
 #define O_X_UP   0x02
@@ -54,6 +63,9 @@ void setup()
   Serial.begin(115200);
   Serial2.begin(GPSBaud, SERIAL_8N1, RXD2, TXD2);
 
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, HIGH);
+
   ring.Begin();
   ring.Show();
 
@@ -81,6 +93,21 @@ void setup()
   compass.init();
   //compass.setMode(0x01, 0x08, 0x10, 0xC0);
   compass.setCalibration(-1707, 1543, -2415, 772, -2397, 740);
+
+  SPI.begin();
+	mfrc522.PCD_Init();
+	mfrc522.PCD_DumpVersionToSerial();
+
+  /*int freq = 2000;
+  int channel = 0;
+  int resolution = 8;
+  ledcSetup(channel, freq, resolution);
+  ledcAttachPin(BUZZER_PIN, channel);
+  ledcWriteTone(channel, freq);
+  delay(100);
+  ledcDetachPin(BUZZER_PIN);*/
+
+  Serial.println("Setup done");
 }
 
 void loop()
@@ -109,6 +136,7 @@ void smartDelay(unsigned long ms)
   {
     while (Serial2.available())
       gps.encode(Serial2.read());
+    stageRfid();
   } while (millis() - start < ms);
 }
 
@@ -243,12 +271,7 @@ void stageGotoPlayground() {
     Serial.printf(" d: %lu c: %d ang: %d", distanceMeters, course, (uint16_t)round(azimuth + ledOffset + course + 11.25f));
 
     uint16_t ledIndex = (uint16_t)round((azimuth + ledOffset + course + 11.25f)/22.5) % 16;
-    if(ledIndex % 2 == 0) {
-      ring.SetPixelColor(ledIndex/2, green);
-    } else {
-      ring.SetPixelColor((ledIndex-1)/2, green);
-      ring.SetPixelColor((ledIndex+1)/2 % 8, green);
-    }
+    ring.SetPixelColor(ledIndex, green);
   } else {
     if(blinker) {
         ring.ClearTo(red);
@@ -259,4 +282,19 @@ void stageGotoPlayground() {
   Serial.println();
   
   ring.Show();
+}
+
+void stageRfid() {
+	// Reset the loop if no new card present on the sensor/reader. This saves the entire process when idle.
+	if ( ! mfrc522.PICC_IsNewCardPresent()) {
+		return;
+	}
+
+	// Select one of the cards
+	if ( ! mfrc522.PICC_ReadCardSerial()) {
+		return;
+	}
+
+	// Dump debug info about the card; PICC_HaltA() is automatically called
+	mfrc522.PICC_DumpToSerial(&(mfrc522.uid));
 }
